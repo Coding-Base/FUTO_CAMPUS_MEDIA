@@ -1,0 +1,9 @@
+Django
+djangorestframework
+django-cors-headers
+psycopg2-binary
+dj-database-url
+python-dotenv
+pillow
+cloudinary
+django-cloudinary-storage
