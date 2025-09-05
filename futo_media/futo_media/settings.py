@@ -4,25 +4,36 @@ from pathlib import Path
 import dj_database_url
 from dotenv import load_dotenv
 
-# Load .env from project root (if present)
+# Load local .env in development (safe fallback)
 load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# -------------------------
+# -----------------------
 # Basic / Security
-# -------------------------
+# -----------------------
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key")
-DEBUG = os.getenv("DEBUG", "True").lower() in ("true", "1", "yes")
+DEBUG = os.getenv("DEBUG", "False").lower() in ("true", "1", "yes")
 
-# ALLOWED_HOSTS: comma-separated in env, fallback to localhosts
-ALLOWED_HOSTS = [h.strip() for h in os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1").split(",") if h.strip()]
+# ALLOWED_HOSTS: read comma-separated list from env var, else localhost defaults.
+# Example: "localhost,127.0.0.1,futo-campus-media-backend.onrender.com"
+raw_allowed = os.getenv("ALLOWED_HOSTS", "")
+ALLOWED_HOSTS = [h.strip() for h in raw_allowed.split(",") if h.strip()]
 
-# -------------------------
-# Installed apps
-# -------------------------
+# If running on Render, Render provides RENDER_EXTERNAL_HOSTNAME environment variable.
+# Add it automatically if present and not already in the list.
+render_host = os.getenv("RENDER_EXTERNAL_HOSTNAME")
+if render_host and render_host not in ALLOWED_HOSTS:
+    ALLOWED_HOSTS.append(render_host)
+
+# safe default for local development if nothing set
+if not ALLOWED_HOSTS:
+    ALLOWED_HOSTS = ["localhost", "127.0.0.1"]
+
+# -----------------------
+# Installed apps & middleware
+# -----------------------
 INSTALLED_APPS = [
-    # Django built-ins
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -30,25 +41,21 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
 
-    # Third-party
     "rest_framework",
     "corsheaders",
 
-    # Cloudinary (optional)
+    # Cloudinary storage if used
     "cloudinary",
     "cloudinary_storage",
 
-    # Local apps
+    # local apps
     "blog",
 ]
 
-# -------------------------
-# Middleware
-# -------------------------
 MIDDLEWARE = [
-    "corsheaders.middleware.CorsMiddleware",  # must come early
+    "corsheaders.middleware.CorsMiddleware",  # must be high
     "django.middleware.security.SecurityMiddleware",
-    "whitenoise.middleware.WhiteNoiseMiddleware",  # serve static files on Render/simple hosts
+    "whitenoise.middleware.WhiteNoiseMiddleware",  # serve static files efficiently
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -62,15 +69,15 @@ ROOT_URLCONF = "futo_media.urls"
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
-        "DIRS": [],  # add template dirs if needed
+        "DIRS": [],
         "APP_DIRS": True,
         "OPTIONS": {
             "context_processors": [
                 "django.template.context_processors.debug",
-                "django.template.context_processors.request",  # useful for request.build_absolute_uri()
+                "django.template.context_processors.request",
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
-            ],
+            ]
         },
     }
 ]
@@ -78,18 +85,20 @@ TEMPLATES = [
 WSGI_APPLICATION = "futo_media.wsgi.application"
 ASGI_APPLICATION = "futo_media.asgi.application"
 
-# -------------------------
-# Database (DATABASE_URL recommended on Render)
-# -------------------------
+# -----------------------
+# Database
+# -----------------------
 DATABASE_URL = os.getenv("DATABASE_URL")
 if DATABASE_URL:
     DATABASES = {"default": dj_database_url.parse(DATABASE_URL, conn_max_age=600)}
 else:
-    DATABASES = {"default": {"ENGINE": "django.db.backends.sqlite3", "NAME": BASE_DIR / "db.sqlite3"}}
+    DATABASES = {
+        "default": {"ENGINE": "django.db.backends.sqlite3", "NAME": BASE_DIR / "db.sqlite3"}
+    }
 
-# -------------------------
-# Password validation
-# -------------------------
+# -----------------------
+# Password validators
+# -----------------------
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
     {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
@@ -97,33 +106,25 @@ AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]
 
-# -------------------------
-# Internationalization & timezone
-# -------------------------
+# -----------------------
+# Internationalization
+# -----------------------
 LANGUAGE_CODE = "en-us"
 TIME_ZONE = "Africa/Lagos"
 USE_I18N = True
 USE_TZ = True
 
-# -------------------------
-# Static files (CSS, JS, images)
-# -------------------------
+# -----------------------
+# Static files (WhiteNoise)
+# -----------------------
 STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
+# WhiteNoise compression (optional)
+STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 
-# WhiteNoise compressed manifest storage (recommended on Render)
-STATICFILES_STORAGE = os.getenv(
-    "STATICFILES_STORAGE", "whitenoise.storage.CompressedManifestStaticFilesStorage"
-)
-
-# Optionally include local static dir(s)
-STATICFILES_DIRS = [
-    # BASE_DIR / "static",
-]
-
-# -------------------------
-# Media & Cloudinary
-# -------------------------
+# -----------------------
+# Cloudinary / Media
+# -----------------------
 CLOUDINARY_CLOUD_NAME = os.getenv("CLOUDINARY_CLOUD_NAME")
 CLOUDINARY_API_KEY = os.getenv("CLOUDINARY_API_KEY")
 CLOUDINARY_API_SECRET = os.getenv("CLOUDINARY_API_SECRET")
@@ -133,13 +134,10 @@ USE_CLOUDINARY = False
 if CLOUDINARY_CLOUD_NAME and CLOUDINARY_API_KEY and CLOUDINARY_API_SECRET:
     USE_CLOUDINARY = True
 elif FORCE_CLOUDINARY:
-    # If forced but creds are missing, uploads will fail. Prefer to set the three CLOUDINARY_* vars.
     USE_CLOUDINARY = True
 
 if USE_CLOUDINARY:
-    # Configure Cloudinary SDK and use Cloudinary storage for media
     import cloudinary
-
     cloudinary.config(
         cloud_name=CLOUDINARY_CLOUD_NAME,
         api_key=CLOUDINARY_API_KEY,
@@ -153,70 +151,54 @@ if USE_CLOUDINARY:
         "API_SECRET": CLOUDINARY_API_SECRET,
     }
 else:
-    # Local filesystem storage fallback (dev)
     DEFAULT_FILE_STORAGE = "django.core.files.storage.FileSystemStorage"
 
-# Keep MEDIA_URL / MEDIA_ROOT for local dev and for compatibility
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
-# -------------------------
-# CORS & CSRF
-# -------------------------
-# Allow passing CORS origins via env:
-vite_origin = os.getenv("VITE_API_CLIENT_ORIGIN")
-env_cors = os.getenv("CORS_ALLOWED_ORIGINS", "")
-if env_cors:
-    CORS_ALLOWED_ORIGINS = [u.strip() for u in env_cors.split(",") if u.strip()]
-elif vite_origin:
-    CORS_ALLOWED_ORIGINS = [vite_origin]
-else:
+# -----------------------
+# CORS / CSRF
+# -----------------------
+# CORS_ALLOWED_ORIGINS can be a CSV env var: e.g. "https://futo-campus-media-frontend.onrender.com,http://localhost:5173"
+raw_cors = os.getenv("CORS_ALLOWED_ORIGINS", "")
+CORS_ALLOWED_ORIGINS = [u.strip() for u in raw_cors.split(",") if u.strip()]
+# quick fallback - allow local dev front
+if not CORS_ALLOWED_ORIGINS:
     CORS_ALLOWED_ORIGINS = ["http://localhost:5173", "http://127.0.0.1:5173"]
 
-if os.getenv("CORS_ALLOW_ALL", "False").lower() in ("true", "1", "yes"):
-    CORS_ALLOW_ALL_ORIGINS = True
+# CSRF trusted origins (for secure deployments on https)
+raw_csrf = os.getenv("CSRF_TRUSTED_ORIGINS", "")
+CSRF_TRUSTED_ORIGINS = [u.strip() for u in raw_csrf.split(",") if u.strip()]
+# If FRONTEND origin provided, add as trusted origin automatically
+frontend_origin = os.getenv("VITE_API_CLIENT_ORIGIN")
+if frontend_origin and frontend_origin not in CSRF_TRUSTED_ORIGINS:
+    CSRF_TRUSTED_ORIGINS.append(frontend_origin)
 
-# CSRF trusted origins: comma-separated env var (include frontend origin)
-csrf_env = os.getenv("CSRF_TRUSTED_ORIGINS", "")
-if csrf_env:
-    CSRF_TRUSTED_ORIGINS = [u.strip() for u in csrf_env.split(",") if u.strip()]
-else:
-    CSRF_TRUSTED_ORIGINS = [vite_origin] if vite_origin else []
-
-# -------------------------
-# Security settings (apply in production when DEBUG=False)
-# -------------------------
-# When behind a proxy (Render) accept the X-Forwarded-Proto header
-SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
-
-if not DEBUG:
-    SESSION_COOKIE_SECURE = True
-    CSRF_COOKIE_SECURE = True
-    SECURE_SSL_REDIRECT = os.getenv("SECURE_SSL_REDIRECT", "True").lower() in ("true", "1", "yes")
-    SECURE_HSTS_SECONDS = int(os.getenv("SECURE_HSTS_SECONDS", "31536000"))
-    SECURE_HSTS_INCLUDE_SUBDOMAINS = os.getenv("SECURE_HSTS_INCLUDE_SUBDOMAINS", "True").lower() in ("true", "1", "yes")
-    SECURE_HSTS_PRELOAD = os.getenv("SECURE_HSTS_PRELOAD", "True").lower() in ("true", "1", "yes")
-else:
-    # relaxed for local development
-    SESSION_COOKIE_SECURE = False
-    CSRF_COOKIE_SECURE = False
-    SECURE_SSL_REDIRECT = False
-
-# -------------------------
-# REST framework
-# -------------------------
+# -----------------------
+# REST Framework
+# -----------------------
 REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.AllowAny"],
 }
 
-# -------------------------
-# Misc / Defaults
-# -------------------------
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-# -------------------------
+# -----------------------
+# Security when behind a proxy (Render)
+# -----------------------
+# Render (and many platforms) terminates TLS and forwards X-Forwarded-* headers.
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
+# If you want additional HTTPS settings, set them via env vars (optional)
+if os.getenv("SECURE_HSTS_SECONDS"):
+    SECURE_HSTS_SECONDS = int(os.getenv("SECURE_HSTS_SECONDS"))
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = os.getenv("SECURE_HSTS_INCLUDE_SUBDOMAINS", "False").lower() in ("true", "1", "yes")
+    SECURE_HSTS_PRELOAD = os.getenv("SECURE_HSTS_PRELOAD", "False").lower() in ("true", "1", "yes")
+    SECURE_SSL_REDIRECT = os.getenv("SECURE_SSL_REDIRECT", "False").lower() in ("true", "1", "yes")
+
+# -----------------------
 # Logging (simple)
-# -------------------------
+# -----------------------
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
