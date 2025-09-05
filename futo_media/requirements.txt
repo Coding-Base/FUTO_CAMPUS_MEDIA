@@ -9,5 +9,5 @@ cloudinary
 django-cloudinary-storage
 whitenoise
 psycopg2-binary    # for PostgreSQL
-corsheaders
+django-cors-headers
 gunicorn
