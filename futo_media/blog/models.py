@@ -1,9 +1,9 @@
+# blog/models.py
 from django.db import models
 from django.contrib.auth import get_user_model
 from django.utils.text import slugify
 from django.db.models.signals import pre_save
 from django.dispatch import receiver
-import uuid
 
 User = get_user_model()
 
@@ -22,7 +22,8 @@ class Post(models.Model):
     title = models.CharField(max_length=255)
     subtitle = models.CharField(max_length=255, blank=True)
     content = models.TextField()
-    image = models.ImageField(upload_to='post_images/', blank=True, null=True)
+    # Increased max_length for Cloudinary-style URLs
+    image = models.ImageField(upload_to='post_images/', blank=True, null=True, max_length=500)
     slug = models.SlugField(max_length=255, unique=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -48,6 +49,7 @@ def ensure_slug(sender, instance, **kwargs):
 
 class Comment(models.Model):
     post = models.ForeignKey(Post, related_name='comments', on_delete=models.CASCADE)
+    parent = models.ForeignKey('self', related_name='replies', null=True, blank=True, on_delete=models.CASCADE)
     name = models.CharField(max_length=120)
     email = models.EmailField(blank=True, null=True)
     content = models.TextField()
