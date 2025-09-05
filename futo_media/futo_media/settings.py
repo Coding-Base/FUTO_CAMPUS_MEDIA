@@ -123,20 +123,15 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 
 # -----------------------
+# -----------------------
 # Cloudinary / Media
 # -----------------------
 CLOUDINARY_CLOUD_NAME = os.getenv("CLOUDINARY_CLOUD_NAME")
 CLOUDINARY_API_KEY = os.getenv("CLOUDINARY_API_KEY")
 CLOUDINARY_API_SECRET = os.getenv("CLOUDINARY_API_SECRET")
-FORCE_CLOUDINARY = os.getenv("FORCE_CLOUDINARY", "False").lower() in ("true", "1", "yes")
 
-USE_CLOUDINARY = False
-if CLOUDINARY_CLOUD_NAME and CLOUDINARY_API_KEY and CLOUDINARY_API_SECRET:
-    USE_CLOUDINARY = True
-elif FORCE_CLOUDINARY:
-    USE_CLOUDINARY = True
-
-if USE_CLOUDINARY:
+# Check if all required Cloudinary credentials are provided
+if all([CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET]):
     import cloudinary
     cloudinary.config(
         cloud_name=CLOUDINARY_CLOUD_NAME,
@@ -145,12 +140,8 @@ if USE_CLOUDINARY:
         secure=True,
     )
     DEFAULT_FILE_STORAGE = "cloudinary_storage.storage.MediaCloudinaryStorage"
-    CLOUDINARY_STORAGE = {
-        "CLOUD_NAME": CLOUDINARY_CLOUD_NAME,
-        "API_KEY": CLOUDINARY_API_KEY,
-        "API_SECRET": CLOUDINARY_API_SECRET,
-    }
 else:
+    # Fallback to local filesystem if Cloudinary credentials are missing
     DEFAULT_FILE_STORAGE = "django.core.files.storage.FileSystemStorage"
 
 MEDIA_URL = "/media/"
@@ -206,3 +197,4 @@ LOGGING = {
     "handlers": {"console": {"class": "logging.StreamHandler", "formatter": "simple"}},
     "root": {"handlers": ["console"], "level": os.getenv("DJANGO_LOG_LEVEL", "INFO")},
 }
+
