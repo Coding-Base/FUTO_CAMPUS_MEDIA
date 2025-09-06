@@ -5,6 +5,9 @@ from django.utils.text import slugify
 from django.db.models.signals import pre_save
 from django.dispatch import receiver
 
+# Use CloudinaryField so uploads go to Cloudinary and URL/public_id are handled
+from cloudinary.models import CloudinaryField
+
 User = get_user_model()
 
 def generate_unique_slug(instance, value):
@@ -22,14 +25,23 @@ class Post(models.Model):
     title = models.CharField(max_length=255)
     subtitle = models.CharField(max_length=255, blank=True)
     content = models.TextField()
-    # Increased max_length for Cloudinary-style URLs
-    image = models.ImageField(upload_to='post_images/', blank=True, null=True, max_length=500)
+
+    # CloudinaryField stores a public_id in DB and exposes .url -> full CDN URL.
+    # Force uploads into the folder 'futo_media/posts' via folder parameter.
+    image = CloudinaryField(
+        "image",
+        folder="futo_media/posts",
+        resource_type="image",
+        blank=True,
+        null=True,
+    )
+
     slug = models.SlugField(max_length=255, unique=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        ordering = ['-created_at']
+        ordering = ["-created_at"]
 
     def __str__(self):
         return self.title
@@ -47,9 +59,10 @@ def ensure_slug(sender, instance, **kwargs):
     if not instance.slug:
         instance.slug = generate_unique_slug(instance, instance.title)
 
+
 class Comment(models.Model):
-    post = models.ForeignKey(Post, related_name='comments', on_delete=models.CASCADE)
-    parent = models.ForeignKey('self', related_name='replies', null=True, blank=True, on_delete=models.CASCADE)
+    post = models.ForeignKey(Post, related_name="comments", on_delete=models.CASCADE)
+    parent = models.ForeignKey("self", null=True, blank=True, related_name="replies", on_delete=models.CASCADE)
     name = models.CharField(max_length=120)
     email = models.EmailField(blank=True, null=True)
     content = models.TextField()
@@ -57,18 +70,21 @@ class Comment(models.Model):
     is_active = models.BooleanField(default=True)
 
     class Meta:
-        ordering = ['created_at']
+        ordering = ["created_at"]
 
     def __str__(self):
-        return f'Comment by {self.name}'
+        return f"Comment by {self.name}"
+
 
 class Like(models.Model):
-    post = models.ForeignKey(Post, related_name='likes', on_delete=models.CASCADE)
+    post = models.ForeignKey(Post, related_name="likes", on_delete=models.CASCADE)
     visitor_id = models.CharField(max_length=255)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        unique_together = ('post', 'visitor_id')
+        unique_together = ("post", "visitor_id")
 
     def __str__(self):
-        return f'Like {self.post_id} by {self.visitor_id}'
+        return f"Like {self.post_id} by {self.visitor_id}"
+
+
