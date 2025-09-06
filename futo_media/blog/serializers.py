@@ -1,22 +1,30 @@
 # blog/serializers.py
+from urllib.parse import unquote, urlsplit, urlunsplit
 from rest_framework import serializers
 from .models import Post, Comment
-from urllib.parse import unquote, urlsplit, urlunsplit
 
 def _normalize_candidate(candidate: str) -> str | None:
     """
-    Normalize a candidate string that may be:
-    - percent-encoded (https%3A%2F%2F... or https%3A/...),
-    - prefixed with '/media/' or 'media/',
-    - containing an embedded http link like 'http://host/media/https://res.cloudinary.com/...'
-    Returns a cleaned https:// or http:// URL string or None.
+    Normalize candidate strings into a sensible absolute URL if possible.
+
+    Handles:
+      - percent-encoded values (single or double encoded)
+      - values prefixed with 'media/' or '/media/'
+      - embedded/duplicated http fragments (take last 'http' occurrence)
+      - malformed 'https:/' -> 'https://'
+      - Cloudinary special case: ensure '/image/upload' exists in the path
     """
     if not candidate:
         return None
 
-    v = candidate
+    v = candidate.strip()
 
-    # Repeatedly unquote a few times (handles double-encoded values)
+    # If value contains multiple http(s) occurrences (duplication), keep last one
+    if v.count("http") > 1:
+        idx = v.rfind("http")
+        v = v[idx:]
+
+    # Repeatedly unquote a few times to handle double-encoded strings
     for _ in range(3):
         if "%" in v:
             try:
@@ -29,15 +37,14 @@ def _normalize_candidate(candidate: str) -> str | None:
         else:
             break
 
-    # strip lead slashes/spaces
+    # trim leading slashes/spaces
     v = v.lstrip().lstrip("/")
 
-    # strip leading 'media/' if present
+    # strip leading media/ if present
     if v.startswith("media/"):
         v = v[len("media/"):]
 
-    # Some broken variants become 'https:/res.cloudinary.com/...' (single slash after :)
-    # fix common malformed 'http:/' or 'https:/'
+    # Fix common malformed single-slash scheme patterns: 'http:/' or 'https:/'
     if v.startswith("http:/") and not v.startswith("http://"):
         v = "http://" + v[len("http:/") :]
     if v.startswith("https:/") and not v.startswith("https://"):
@@ -49,33 +56,61 @@ def _normalize_candidate(candidate: str) -> str | None:
         if idx != -1:
             v = v[idx:]
 
-    # If now looks like absolute URL, ensure scheme and return
+    # Now try to parse as URL; if it looks absolute, possibly repair cloudinary path
     if v.startswith("http://") or v.startswith("https://"):
-        # Prefer https scheme if possible (Cloudinary uses https)
+        # Parse
         parts = urlsplit(v)
-        scheme = parts.scheme
+        scheme, netloc, path, query, frag = parts.scheme, parts.netloc, parts.path, parts.query, parts.fragment
+
+        # upgrade http -> https by default (Cloudinary works on https)
         if scheme == "http":
-            # upgrade to https where possible (safe default)
             scheme = "https"
-            v = urlunsplit((scheme, parts.netloc, parts.path, parts.query, parts.fragment))
-        return v
+
+        # if it's a cloudinary URL but missing '/image/upload' insert it after cloud name
+        # e.g. https://res.cloudinary.com/<cloud_name>/post_images/... -> insert /image/upload
+        host = netloc.lower()
+        if "res.cloudinary.com" in host:
+            # Normalize path duplicates (if path contains another 'http' fragment, keep the last)
+            if "http" in path:
+                idx = path.rfind("http")
+                path = path[idx:]
+
+            # If /image/upload is missing, attempt to insert it:
+            if "/image/upload" not in path:
+                # split path into components: ['', cloud_name, rest...]
+                comps = path.split("/")
+                # ensure we have at least cloud_name in comps[1]
+                if len(comps) > 1 and comps[1]:
+                    cloud_name = comps[1]
+                    rest = "/".join(comps[2:]) if len(comps) > 2 else ""
+                    # build new path ensuring no duplicate slashes
+                    if rest:
+                        new_path = f"/{cloud_name}/image/upload/{rest}"
+                    else:
+                        new_path = f"/{cloud_name}/image/upload"
+                    path = new_path
+
+        # rebuild URL
+        try:
+            fixed = urlunsplit((scheme, netloc, path, query, frag))
+        except Exception:
+            fixed = v
+
+        return fixed
 
     return None
 
 
 class CommentSerializer(serializers.ModelSerializer):
-    # supports threaded replies if your model has parent/replies fields
     parent = serializers.PrimaryKeyRelatedField(queryset=Comment.objects.all(), allow_null=True, required=False)
     replies = serializers.SerializerMethodField()
 
     class Meta:
         model = Comment
-        # keep fields you previously used
         fields = ["id", "post", "parent", "name", "email", "content", "created_at", "is_active", "replies"]
         read_only_fields = ["id", "created_at", "post", "replies"]
 
     def get_replies(self, obj):
-        # only active replies, ordered by created_at (matches your UI)
         qs = obj.replies.filter(is_active=True).order_by("created_at")
         return CommentSerializer(qs, many=True, context=self.context).data
 
@@ -101,33 +136,41 @@ class PostListSerializer(serializers.ModelSerializer):
 
     def get_image_url(self, obj):
         """
-        Return a cleaned absolute URL for an image:
-         - prefer obj.image.name when it already contains an absolute URL
-         - otherwise try obj.image.url (storage provided)
-         - attempt to decode malformed/encoded values and return https://... when possible
-         - fallback: build absolute URI from request when relative paths exist
+        Prefer canonical absolute image URLs:
+
+        Order:
+          1) obj.image.name if it already contains an absolute URL (some rows store full URLs)
+          2) obj.image.url from storage (most correct when Cloudinary storage is active)
+          3) try normalized decoding for name/url
+          4) fallback: build absolute URI using request for relative values
         """
-        # 1) If image.name stores a full Cloudinary URL already, prefer it.
+        # 1) raw .name might already be an absolute URL
         raw_name = getattr(obj.image, "name", "") or ""
         if raw_name.startswith("http://") or raw_name.startswith("https://"):
-            # return as-is (already canonical). If you want to enforce https, you could rewrite here.
+            # If it's a Cloudinary hostname missing '/image/upload' we'll try to normalize
+            normalized = _normalize_candidate(raw_name)
+            if normalized:
+                return normalized
             return raw_name
 
-        # 2) Try storage-provided .url
+        # 2) storage-provided .url (may throw)
         try:
             raw_url = getattr(obj.image, "url", "") or ""
         except Exception:
             raw_url = ""
 
         if raw_url.startswith("http://") or raw_url.startswith("https://"):
+            normalized = _normalize_candidate(raw_url)
+            if normalized:
+                return normalized
             return raw_url
 
-        # 3) Try normalized candidates (name first, then url)
+        # 3) try to decode/normalize either name or url (handles encoded or malformed)
         decoded = _normalize_candidate(raw_name) or _normalize_candidate(raw_url)
         if decoded:
             return decoded
 
-        # 4) Fallback to request-built absolute URI for relative/local paths
+        # 4) fallback: build absolute URI from request for relative paths
         request = self.context.get("request")
         if raw_url:
             try:
