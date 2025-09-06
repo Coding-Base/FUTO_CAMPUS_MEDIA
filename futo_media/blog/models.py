@@ -25,7 +25,7 @@ class Post(models.Model):
     subtitle = models.CharField(max_length=255, blank=True)
     content = models.TextField()
     # Increased max_length so Cloudinary URLs won’t be truncated
-    image = CloudinaryField(
+image = CloudinaryField(
         "image",
         folder="futo_media/posts",
         resource_type="image",
