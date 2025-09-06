@@ -5,10 +5,8 @@ from django.utils.text import slugify
 from django.db.models.signals import pre_save
 from django.dispatch import receiver
 
-# Use CloudinaryField so uploads go to Cloudinary and URL/public_id are handled
-from cloudinary.models import CloudinaryField
-
 User = get_user_model()
+
 
 def generate_unique_slug(instance, value):
     base = slugify(value)[:200]
@@ -20,22 +18,14 @@ def generate_unique_slug(instance, value):
         counter += 1
     return slug
 
+
 class Post(models.Model):
     author = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL)
     title = models.CharField(max_length=255)
     subtitle = models.CharField(max_length=255, blank=True)
     content = models.TextField()
-
-    # CloudinaryField stores a public_id in DB and exposes .url -> full CDN URL.
-    # Force uploads into the folder 'futo_media/posts' via folder parameter.
-    image = CloudinaryField(
-        "image",
-        folder="futo_media/posts",
-        resource_type="image",
-        blank=True,
-        null=True,
-    )
-
+    # Increased max_length so Cloudinary URLs won’t be truncated
+    image = models.ImageField(upload_to="post_images/", blank=True, null=True, max_length=500)
     slug = models.SlugField(max_length=255, unique=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -46,13 +36,44 @@ class Post(models.Model):
     def __str__(self):
         return self.title
 
+    # NOTE: these properties now accept annotated values from queryset.
+    # Django will be able to set .likes_count and .comments_count when using annotate().
     @property
     def likes_count(self):
+        # Prefer an annotated value stored on the instance (set by queryset annotation).
+        if "likes_count" in self.__dict__:
+            try:
+                return int(self.__dict__["likes_count"])
+            except Exception:
+                pass
+        # fallback to counting related likes
         return self.likes.count()
+
+    @likes_count.setter
+    def likes_count(self, value):
+        # allow Django to set annotated value
+        try:
+            self.__dict__["likes_count"] = int(value)
+        except Exception:
+            self.__dict__["likes_count"] = value
 
     @property
     def comments_count(self):
+        if "comments_count" in self.__dict__:
+            try:
+                return int(self.__dict__["comments_count"])
+            except Exception:
+                pass
+        # fallback to counting active comments
         return self.comments.filter(is_active=True).count()
+
+    @comments_count.setter
+    def comments_count(self, value):
+        try:
+            self.__dict__["comments_count"] = int(value)
+        except Exception:
+            self.__dict__["comments_count"] = value
+
 
 @receiver(pre_save, sender=Post)
 def ensure_slug(sender, instance, **kwargs):
@@ -62,7 +83,7 @@ def ensure_slug(sender, instance, **kwargs):
 
 class Comment(models.Model):
     post = models.ForeignKey(Post, related_name="comments", on_delete=models.CASCADE)
-    parent = models.ForeignKey("self", null=True, blank=True, related_name="replies", on_delete=models.CASCADE)
+    parent = models.ForeignKey("self", related_name="replies", null=True, blank=True, on_delete=models.CASCADE)
     name = models.CharField(max_length=120)
     email = models.EmailField(blank=True, null=True)
     content = models.TextField()
@@ -86,5 +107,3 @@ class Like(models.Model):
 
     def __str__(self):
         return f"Like {self.post_id} by {self.visitor_id}"
-
-
