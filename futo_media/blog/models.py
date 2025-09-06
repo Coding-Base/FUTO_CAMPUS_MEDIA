@@ -4,6 +4,7 @@ from django.contrib.auth import get_user_model
 from django.utils.text import slugify
 from django.db.models.signals import pre_save
 from django.dispatch import receiver
+from cloudinary.models import CloudinaryField 
 
 User = get_user_model()
 
@@ -114,3 +115,4 @@ class Like(models.Model):
 
     def __str__(self):
         return f"Like {self.post_id} by {self.visitor_id}"
+
